@@ -1,0 +1,143 @@
+import bcrypt
+import secrets
+import sqlite3
+import os
+
+class AuthService:
+    def __init__(self):
+        self.conn = sqlite3.connect('users.db')
+        self.create_table()
+        self.sessions = {}
+
+    def create_table(self):
+        cursor = self.conn.cursor()
+        cursor.execute('''DROP TABLE IF EXISTS users''')  # Eliminar la tabla existente
+        cursor.execute('''CREATE TABLE IF NOT EXISTS users
+                          (username TEXT PRIMARY KEY, password TEXT, role TEXT)''')
+        self.conn.commit()
+
+    def register_user(self, username, password, role='user'):
+        if len(username) < 4 or len(password) < 8:  
+            print("El nombre de usuario debe tener al menos 4 caracteres y la contraseña al menos 8 caracteres.")
+            return False
+
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username=?", (username,))
+        existing_user = cursor.fetchone()
+        if existing_user:
+            print("El nombre de usuario ya está en uso.")
+            return False
+        else:
+            hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", (username, hashed_password.decode('utf-8'), role))
+            self.conn.commit()
+            print("Usuario registrado exitosamente.")
+            return True
+
+    def login_user(self, username, password):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username=?", (username,))
+        user = cursor.fetchone()
+        if user and bcrypt.checkpw(password.encode('utf-8'), user[1].encode('utf-8')):
+            print("Inicio de sesión exitoso.")
+            token = secrets.token_hex(16)
+            self.sessions[token] = (username, user[2])
+            return token
+        else:
+            print("Credenciales incorrectas. Por favor, inténtelo de nuevo.")
+            return None
+
+    def authorize_user(self, token):
+        if token in self.sessions:
+            print("Usuario autorizado.")
+            return True
+        else:
+            print("Token inválido. Inicie sesión nuevamente.")
+            return False
+
+class BenefitService:
+    def __init__(self):
+        self.benefits = {}
+        self.available_benefits = [
+            "Descuento del 10% en restaurantes",
+            "Acceso a eventos exclusivos",
+            "Envío gratuito en compras superiores a $50",
+            "Ofertas especiales en viajes"
+        ]
+
+    def add_benefit(self, username, benefit_number, requester_role):
+        if requester_role != 'admin':
+            print("Solo los administradores pueden agregar beneficios a otros usuarios.")
+            return
+
+        if username not in self.benefits:
+            self.benefits[username] = []
+        self.benefits[username].append(self.available_benefits[benefit_number - 1])
+
+    def get_benefits(self, username):
+        if username in self.benefits:
+            return self.benefits[username]
+        else:
+            return []
+
+    def print_available_benefits(self):
+        print("Beneficios disponibles:")
+        for idx, benefit in enumerate(self.available_benefits, start=1):
+            print(f"    {idx}. {benefit}")
+
+def menu():
+    print("Bienvenido al Sistema de Gestión de Beneficios")
+    print("1. Iniciar sesión")
+    print("2. Registrarse")
+    print("3. Ver beneficios")
+    print("4. Agregar beneficios")
+    print("5. Salir")
+    choice = input("Por favor, seleccione una opción: ")
+    return choice
+
+if __name__ == "__main__":
+    if os.path.exists('users.db'):
+        os.remove('users.db')  # Eliminar la base de datos existente
+
+    auth_service = AuthService()
+    benefit_service = BenefitService()
+    admin_token = None  # Token de sesión del administrador
+
+    while True:
+        choice = menu()
+
+        if choice == '1':
+            username = input("Ingrese su nombre de usuario: ")
+            password = input("Ingrese su contraseña: ")
+            token = auth_service.login_user(username, password)
+            if token:
+                auth_service.authorize_user(token)
+                if auth_service.sessions[token][1] == 'admin':
+                    admin_token = token  # Guardar el token de sesión del administrador
+        elif choice == '2':
+            username = input("Ingrese un nuevo nombre de usuario: ")
+            password = input("Ingrese una nueva contraseña: ")
+            role = input("Ingrese el rol (user/admin): ")
+            auth_service.register_user(username, password, role)
+        elif choice == '3':
+            username = input("Ingrese su nombre de usuario: ")
+            benefits = benefit_service.get_benefits(username)
+            if benefits:
+                print("Sus beneficios:")
+                for idx, benefit in enumerate(benefits, start=1):
+                    print(f"{idx}. {benefit}")
+            else:
+                print("No tiene beneficios disponibles.")
+        elif choice == '4':
+            if admin_token:  # Verificar si el administrador ha iniciado sesión previamente
+                username = input("Ingrese el nombre de usuario al que desea agregar un beneficio: ")
+                benefit_service.print_available_benefits()
+                benefit_number = int(input("Seleccione el número de beneficio que desea agregar: "))
+                benefit_service.add_benefit(username, benefit_number, 'admin')
+            else:
+                print("Debe iniciar sesión como administrador para agregar beneficios.")
+        elif choice == '5':
+            print("Gracias por usar nuestro sistema. ¡Hasta luego!")
+            break
+        else:
+            print("Opción inválida. Por favor, seleccione nuevamente.")
